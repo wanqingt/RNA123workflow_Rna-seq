@@ -1,0 +1,58 @@
+---
+title: "download and combine data"
+author: "T"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+#Setup knitr
+```{r setup, collapse=TRUE, cache=FALSE, echo = FALSE, results="hide", message = FALSE}
+# this chunk setup options for knitr 
+suppressPackageStartupMessages(require(knitr))
+suppressPackageStartupMessages(require(rprojroot))
+
+root.dir <- rprojroot::find_rstudio_root_file()
+root.dir #point out working dir
+
+knitr::opts_knit$set(root.dir = root.dir) # all paths in code chunks are relative to this root.dir
+
+#once the root.dir change the paths and code change
+
+#nice way to change working directory
+
+knitr::opts_chunk$set(comment = "",  cache=FALSE, message = FALSE, echo = TRUE, tidy = FALSE, collapse=TRUE)
+options(width = 288)
+```
+
+
+```{r setup directory}
+# this chunk setup directory and load functions
+options(stringsAsFactors = FALSE)
+data.dir <- file.path(root.dir, "rdata") #combine to a new directory path
+
+```
+
+### Get data
+
+```{r}
+
+#if(!file.exists("./rdata")){dir.create("./rdata")}
+setwd(data.dir)
+url <- "https://www.ncbi.nlm.nih.gov/geo/download/?acc=GSE63310&format=file"
+utils::download.file(url, destfile="GSE63310_RAW.tar", mode="wb") 
+utils::untar("GSE63310_RAW.tar", exdir = ".")
+files <- c("GSM1545535_10_6_5_11.txt", "GSM1545536_9_6_5_11.txt", "GSM1545538_purep53.txt",
+  "GSM1545539_JMS8-2.txt", "GSM1545540_JMS8-3.txt", "GSM1545541_JMS8-4.txt",
+  "GSM1545542_JMS8-5.txt", "GSM1545544_JMS9-P7c.txt", "GSM1545545_JMS9-P8c.txt")
+for(i in paste(files, ".gz", sep=""))
+  R.utils::gunzip(i, overwrite=TRUE)
+
+files <- c("GSM1545535_10_6_5_11.txt", "GSM1545536_9_6_5_11.txt", 
+   "GSM1545538_purep53.txt", "GSM1545539_JMS8-2.txt", 
+   "GSM1545540_JMS8-3.txt", "GSM1545541_JMS8-4.txt", 
+   "GSM1545542_JMS8-5.txt", "GSM1545544_JMS9-P7c.txt", 
+   "GSM1545545_JMS9-P8c.txt")
+read.delim(files[1], nrow=5)
+```
+

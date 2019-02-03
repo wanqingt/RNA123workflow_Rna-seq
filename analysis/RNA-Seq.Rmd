@@ -1,0 +1,427 @@
+---
+title: "RNA-seq"
+author: "T"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+
+#Setup knitr
+```{r setup, collapse=TRUE, cache=FALSE, echo = FALSE, results="hide", message = FALSE}
+# this chunk setup options for knitr 
+suppressPackageStartupMessages(require(knitr))
+suppressPackageStartupMessages(require(rprojroot))
+
+root.dir <- rprojroot::find_rstudio_root_file()
+root.dir #point out working dir
+
+knitr::opts_knit$set(root.dir = root.dir) # all paths in code chunks are relative to this root.dir
+
+#once the root.dir change the paths and code change
+
+#nice way to change working directory
+
+knitr::opts_chunk$set(comment = "",  cache=FALSE, message = FALSE, echo = TRUE, tidy = FALSE, collapse=TRUE)
+options(width = 288)
+```
+
+
+```{r setup directory}
+# this chunk setup directory and load functions
+options(stringsAsFactors = FALSE)
+data.dir <- file.path(root.dir, "rdata") #combine to a new directory path
+analysis.dir <- file.path(root.dir, "analysis")
+graph.dir <- file.path(root.dir,"graph")
+```
+
+#Load library
+
+```{r message=FALSE, warning=F}
+
+library(limma)
+library(Glimma)
+library(edgeR)
+library(Mus.musculus)
+library(R.utils)
+library(RColorBrewer)
+library(BiocManager)
+library(RNAseq123)
+library(RColorBrewer)
+```
+
+
+#4 Data packaging
+
+##4.1 Reading in count-data
+
+combine 9 chip data to 1 matrix by entrezID\
+
+```{r}
+
+files <- c("GSM1545535_10_6_5_11.txt", "GSM1545536_9_6_5_11.txt", 
+   "GSM1545538_purep53.txt", "GSM1545539_JMS8-2.txt", 
+   "GSM1545540_JMS8-3.txt", "GSM1545541_JMS8-4.txt", 
+   "GSM1545542_JMS8-5.txt", "GSM1545544_JMS9-P7c.txt", 
+   "GSM1545545_JMS9-P8c.txt")
+
+x <- readDGE(files, columns=c(1,3),path = data.dir)  # 1,3 entrezid, count
+class(x)
+dim(x)
+DGEList(x)
+
+```
+##4.2 Organising sample information
+
+Examples include cell type (basal, LP and ML in this experiment)\
+
+```{r}
+x$samples
+
+samplenames <- substring(colnames(x), 12, nchar(colnames(x)))
+samplenames
+
+colnames(x) <- samplenames
+group <- as.factor(c("LP", "ML", "Basal", "Basal", "ML", "LP", 
+                     "Basal", "ML", "LP"))
+x$samples$group <- group
+lane <- as.factor(rep(c("L004","L006","L008"), c(3,4,2)))
+x$samples$lane <- lane
+x$samples
+```
+##4.3 Organising gene annotations
+
+A second data frame named genes in the DGEList-object is used to store gene-level information associated with rows of the counts matrix.\
+
+```{r}
+geneid <- rownames(x)
+genes <- select(Mus.musculus, keys=geneid, columns=c("SYMBOL", "TXCHROM"), 
+                keytype="ENTREZID")
+head(genes)
+
+```
+\
+unique genes\
+
+```{r}
+genes <- genes[!duplicated(genes$ENTREZID),]
+head(genes)
+```
+
+add genes table in to data x\
+
+```{r}
+x$genes <- genes
+x
+```
+#5 Data pre-processing
+
+##5.1 Transformations from the raw-scale
+
+
+
+
+```{r}
+
+
+cpm <- cpm(x)
+lcpm <- cpm(x, log=TRUE)
+head(cpm)
+head(lcpm)
+
+L <- mean(x$samples$lib.size) * 1e-6
+M <- median(x$samples$lib.size) * 1e-6
+c(L, M)
+
+summary(lcpm)
+```
+##5.2 removing genes that are lowly expressed
+
+```{r}
+
+table(rowSums(x$counts==0)==9)
+
+```
+
+Using a nominal CPM value of 1 (which is equivalent to a log-CPM value of 0)\
+
+The filterByExpr function in the edgeR package provides an automatic way to filter genes, while keeping as many genes as possible with worthwhile counts.\
+
+By default, the function keeps genes with about 10 read counts or more in a minimum number of samples, where the number of samples is chosen according to the minimum group sample size. The actual filtering uses CPM values rather than counts in order to avoid giving preference to samples with large library sizes. For this dataset, the median library size is about 51 million and 10/51 approx. 0.2, so the filterByExpr function keeps genes that have a CPM of 0.2 or more in at least three samples. A biologically interesting gene should be expressed in at least three samples because all the cell type groups have three replicates. The cutoffs used depend on the sequencing depth and on the experimental design. If the library sizes had been larger then a lower CPM cutoff would have been chosen, because larger library sizes provide better resolution to explore more genes at lower expression levels. Alternatively, smaller library sizes decrease our ability to explore marginal genes and hence would have led to a higher CPM cutoff.\
+
+```{r}
+keep.exprs <- rowSums(cpm>1)>=3 #old
+keep.exprs <- filterByExpr(x, group=group) # update
+
+x <- x[keep.exprs,, keep.lib.sizes=FALSE]  #???
+dim(x)
+
+
+
+```
+
+compare two graph, normal with reduce \
+
+cutoff line = Dotted vertical lines mark the log-CPM threshold (equivalent to a CPM value of about 0.2) used in the filtering step.\
+```{r}
+lcpm.cutoff <- log2(10/M + 2/L)   #Dotted vertical lines mark the log-CPM threshold (equivalent to a CPM value of about 0.2) used in the filtering step.
+
+library(RColorBrewer)
+
+nsamples <- ncol(x)
+col <- brewer.pal(nsamples, "Paired")
+
+
+#pdf(file.path(graph.dir, "normal vs reduce.pdf"))
+par(mfrow=c(1,2))
+plot(density(lcpm[,1]), col=col[1], lwd=2, ylim=c(0,0.26), las=2, main="", xlab="")
+title(main="A. Raw data", xlab="Log-cpm")
+abline(v=lcpm.cutoff, lty=3)
+for (i in 2:nsamples){
+den <- density(lcpm[,i])
+lines(den$x, den$y, col=col[i], lwd=2)
+}
+legend("topright", samplenames, text.col=col, bty="n")
+lcpm <- cpm(x, log=TRUE)
+
+##ggplot2::ggsave(file = "A_Raw_data.pdf", path = graph.dir)
+
+plot(density(lcpm[,1]), col=col[1], lwd=2, ylim=c(0,0.26), las=2, main="", xlab="")
+title(main="B. Filtered data", xlab="Log-cpm")
+abline(v=lcpm.cutoff, lty=3)
+for (i in 2:nsamples){
+den <- density(lcpm[,i])
+lines(den$x, den$y, col=col[i], lwd=2)
+}
+legend("topright", samplenames, text.col=col, bty="n")
+#dev.off()
+```
+
+##5.3 Normalising gene expression distributions
+
+
+Nonetheless, normalisation by the method of trimmed mean of M-values (TMM) (Robinson and Oshlack 2010) is performed using the calcNormFactors function in edgeR.\
+
+
+```{r}
+x <- calcNormFactors(x, method = "TMM")
+x$samples$norm.factors
+x$samples
+
+```
+
+
+To give a better visual representation of the effects of normalisation, the data was duplicated then adjusted so that the counts of the first sample are reduced to 5% of their original values, and in the second sample they are inflated to be 5-times larger.\
+
+
+
+plot unnormalised data and normalised data\
+
+```{r}
+
+x2 <- x
+x2$samples$norm.factors <- 1
+x2$counts[,1] <- ceiling(x2$counts[,1]*0.05)
+x2$counts[,2] <- x2$counts[,2]*5
+
+#pdf(file.path(graph.dir, "unnormalise vs normalise.pdf"))
+
+par(mfrow=c(1,2))
+lcpm <- cpm(x2, log=TRUE)
+boxplot(lcpm, las=2, col=col, main="")
+title(main="A. Example: Unnormalised data",ylab="Log-cpm")
+
+
+x2 <- calcNormFactors(x2)  
+x2$samples$norm.factors
+
+lcpm <- cpm(x2, log=TRUE)
+boxplot(lcpm, las=2, col=col, main="")
+title(main="B. Example: Normalised data",ylab="Log-cpm")
+#dev.off()
+```
+
+##5.4 Unsupervised clustering of samples
+
+brewer.pal ==set color\
+
+```{r}
+lcpm <- cpm(x, log=TRUE)
+#pdf(file.path(graph.dir, "A.sampple groups and B.sequencing lanes.pdf"))
+par(mfrow=c(1,2))
+col.group <- group
+levels(col.group) <-  brewer.pal(nlevels(col.group), "Set1")
+col.group <- as.character(col.group)
+col.lane <- lane
+levels(col.lane) <-  brewer.pal(nlevels(col.lane), "Set2")
+col.lane <- as.character(col.lane)
+
+plotMDS(lcpm, labels=group, col=col.group)
+title(main="A. Sample groups")
+
+
+plotMDS(lcpm, labels=lane, col=col.lane, dim=c(3,4))
+title(main="B. Sequencing lanes")
+#dev.off()
+
+glMDSPlot(lcpm, labels=paste(group, lane, sep="_"), 
+          groups=x$samples[,c(2,5)], launch=F)   ## change launch to T, there is a fancy graph open by html
+```
+
+#6 Differential expression analysis
+
+##6.1 Creating a design matrix and contrasts
+
+
+
+```{r}
+design <- model.matrix(~0+group+lane)
+colnames(design) <- gsub("group", "", colnames(design))
+design
+```
+
+For example, ~0+group+lane removes the intercept from the first factor, group, but an intercept remains in the second factor lane.\
+
+Contrasts for pairwise comparisons between cell populations are set up in limma using the makeContrasts function.\
+
+
+
+```{r}
+contr.matrix <- makeContrasts(
+   BasalvsLP = Basal-LP, 
+   BasalvsML = Basal - ML, 
+   LPvsML = LP - ML, 
+   levels = colnames(design))
+contr.matrix
+```
+
+##6.2 Removing heteroscedascity from count data
+
+voom converts raw counts to log-CPM values by automatically extracting library sizes and normalisation factors from x itself.\
+
+```{r}
+#pdf(file.path(graph.dir, "voom vs final model"))
+par(mfrow=c(1,2))
+v <- voom(x, design, plot=TRUE)
+v   #plot left
+
+
+
+vfit <- lmFit(v, design)
+vfit <- contrasts.fit(vfit, contrasts=contr.matrix)
+efit <- eBayes(vfit)
+plotSA(efit, main="Final model: Mean-variance trend")   #plot right
+#dev.off()
+```
+Figure 4: Means (x-axis) and variances (y-axis) of each gene are plotted to show the dependence between the two before voom is applied to the data (left panel) and how the trend is removed after voom precision weights are applied to the data (right panel)\
+
+
+##6.3 Fitting linear models for comparisons of interest
+
+Linear modelling in limma is carried out using the lmFit and contrasts.fit functions originally written for application to microarrays. The functions can be used for both microarray and RNA-seq data and fit a separate model to the expression values for each gene. Next, empirical Bayes moderation is carried out by borrowing information across all the genes to obtain more precise estimates of gene-wise variability (Smyth 2004). The model’s residual variances are plotted against average expression values in the next figure. It can be seen from this plot that the variance is no longer dependent on the mean expression level.\
+
+##6.4 Examining the number of DE genes
+
+For a quick look at differential expression levels, the number of significantly up- and down-regulated genes can be summarised in a table. Significance is defined using an adjusted p-value cutoff that is set at 5% by default.\
+
+```{r}
+summary(decideTests(efit))
+```
+
+For a stricter definition on significance, one may require log-fold-changes (log-FCs) to be above a minimum value. The treat method (McCarthy and Smyth 2009) can be used to calculate p-values from empirical Bayes moderated t-statistics with a minimum log-FC requirement. \
+
+```{r}
+tfit <- treat(vfit, lfc=1)   #Treat method adj log fold changes
+dt <- decideTests(tfit)
+summary(dt)
+```
+
+
+Genes that are DE in multiple comparisons can be extracted using the results from decideTests, where 0s represent genes that are not DE, 1s represent genes that are up-regulated, and -1s represent genes that are down-regulated.\
+
+The write.fit function can be used to extract and write results for all three comparisons to a single output file.\
+
+```{r}
+de.common <- which(dt[,1]!=0 & dt[,2]!=0)
+length(de.common)
+
+head(tfit$genes$SYMBOL[de.common], n=20)
+pdf(file.path(graph.dir, "venndiagram_comparisons.pdf"))
+vennDiagram(dt[,1:2], circle.col=c("turquoise", "salmon"))
+dev.off()
+write.fit(tfit, dt, file="results.txt")
+```
+
+
+##6.5 Examining individual DE genes from top to bottom
+
+
+```{r}
+basal.vs.lp <- topTreat(tfit, coef=1, n=Inf)
+basal.vs.ml <- topTreat(tfit, coef=2, n=Inf)
+head(basal.vs.lp)
+```
+
+##6.6 Useful graphical representations of differential expression results
+
+To summarise results for all genes visually, mean-difference plots, which display log-FCs from the linear model fit against the average log-CPM values can be generated using the plotMD function, with the differentially expressed genes highlighted.\
+
+Glimma extends this functionality by providing an interactive mean-difference plot via the  glMDPlot function.\
+
+```{r}
+
+#pdf(file.path(graph.dir, "volcano_basalvslp.pdf"))
+plotMD(tfit, column=1, status=dt[,1], main=colnames(tfit)[1], 
+       xlim=c(-8,13))
+#dev.off()
+
+glMDPlot(tfit, coef=1, status=dt, main=colnames(tfit)[1],
+         side.main="ENTREZID", counts=lcpm, groups=group, launch=F) ## glimma package 
+```
+
+A heatmap is created for the top 100 DE genes (as ranked by adjusted p-value) from the basal versus LP contrast using the heatmap.2 function from the gplots package.\
+
+```{r error=TRUE}
+
+
+library(gplots)
+basal.vs.lp.topgenes <- basal.vs.lp$ENTREZID[1:100]
+i <- which(v$genes$ENTREZID %in% basal.vs.lp.topgenes)
+mycol <- colorpanel(1000,"blue","white","red")
+
+pdf(file.path(graph.dir, "heatmap.pdf"))
+heatmap.2(lcpm[i,], scale="row",
+   labRow=v$genes$SYMBOL[i], labCol=group, 
+   col=mycol, trace="none", density.info="none", 
+   margin=c(8,6), lhei=c(2,10), dendrogram="column")
+dev.off()
+```
+
+
+##7 Gene set testing with camera
+
+
+```{r}
+load(system.file("extdata", "mouse_c2_v5p1.rda", package = "RNAseq123"))
+idx <- ids2indices(Mm.c2,id=rownames(v))
+cam.BasalvsLP <- camera(v,idx,design,contrast=contr.matrix[,1])
+head(cam.BasalvsLP,5)
+```
+
+
+```{r}
+cam.BasalvsML <- camera(v,idx,design,contrast=contr.matrix[,2])
+head(cam.BasalvsML,5)
+```
+
+
+```{r}
+cam.LPvsML <- camera(v,idx,design,contrast=contr.matrix[,3])
+head(cam.LPvsML,5)
+```
+
+
+```{r}
+barcodeplot(efit$t[,3], index=idx$LIM_MAMMARY_LUMINAL_MATURE_UP, 
+            index2=idx$LIM_MAMMARY_LUMINAL_MATURE_DN, main="LPvsML")
+```
+
